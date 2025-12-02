@@ -2,7 +2,7 @@ import os
 import time
 import schedule
 from openai import OpenAI
-import openai  # 导入openai模块用于异常捕获
+import openai
 import ccxt
 import pandas as pd
 import numpy as np
@@ -14,8 +14,6 @@ import logging
 from logging.handlers import RotatingFileHandler
 import traceback
 
-
-# ==================== 日志配置 ====================
 def setup_logger():
     """配置日志系统：同时输出到控制台和文件（按日期分割）"""
     log_dir = "trading_logs"
@@ -77,16 +75,13 @@ def setup_logger():
 
 logger = setup_logger()
 
-# ==================== 核心配置与初始化 ====================
 load_dotenv()
 
-# 初始化DeepSeek客户端
 deepseek_client = OpenAI(
     api_key=os.getenv('DEEPSEEK_API_KEY'),
     base_url="https://api.deepseek.com"
 )
 
-# 初始化OKX交易所
 exchange = ccxt.okx({
     'options': {
         'defaultType': 'swap',
@@ -96,7 +91,6 @@ exchange = ccxt.okx({
     'password': os.getenv('OKX_PASSWORD'),
 })
 
-# 交易参数配置
 TRADE_CONFIG = {
     'symbol': 'BTC/USDT:USDT',
     'amount': 0.008,
@@ -111,13 +105,11 @@ TRADE_CONFIG = {
     }
 }
 
-# 全局变量
 price_history = []
 signal_history = []
 position = None
 
 
-# ==================== 交易所相关函数 ====================
 def setup_exchange():
     """设置交易所参数"""
     try:
@@ -172,7 +164,6 @@ def get_current_position():
     return None
 
 
-# ==================== 技术指标相关函数 ====================
 def calculate_technical_indicators(df):
     """计算技术指标"""
     try:
@@ -314,7 +305,7 @@ def get_btc_ohlcv_enhanced():
         levels_analysis = get_support_resistance_levels(df)
 
         result = {
-            'price': float(current_data['close']),  # 确保为普通浮点数
+            'price': float(current_data['close']), 
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'high': float(current_data['high']),
             'low': float(current_data['low']),
@@ -349,7 +340,6 @@ def get_btc_ohlcv_enhanced():
     return None
 
 
-# ==================== 分析与信号生成 ====================
 def generate_technical_analysis_text(price_data):
     """生成技术分析文本"""
     try:
@@ -579,8 +569,6 @@ def analyze_with_deepseek(price_data):
         logger.error(f"❌ DeepSeek分析失败：{str(e)}", exc_info=True)
     return create_fallback_signal(price_data)
 
-
-# ==================== 交易执行 ====================
 def execute_trade(signal_data, price_data):
     """执行交易 - OKX版本（修复保证金判断逻辑）"""
     global position
@@ -625,7 +613,6 @@ def execute_trade(signal_data, price_data):
             logger.info("📌 测试模式 - 仅模拟交易，不实际下单")
             return
 
-        # ========== 修复核心：保证金判断逻辑 ==========
         balance = exchange.fetch_balance()
         usdt_balance = balance['USDT']['free']
         # 精准计算所需保证金（加5%缓冲，应对手续费/价格波动）
@@ -638,7 +625,6 @@ def execute_trade(signal_data, price_data):
             return
         else:
             logger.info(f"✅ 保证金充足：所需 {required_margin:.2f} USDT（含5%缓冲），可用 {usdt_balance:.2f} USDT")
-        # ==============================================
 
         if signal_data['signal'] == 'BUY':
             if current_position and current_position['side'] == 'short':
@@ -710,7 +696,6 @@ def execute_trade(signal_data, price_data):
         logger.error(f"❌ 订单执行失败：{str(e)}", exc_info=True)
 
 
-# ==================== 重试与主逻辑 ====================
 def analyze_with_deepseek_with_retry(price_data, max_retries=2):
     """带重试的DeepSeek分析"""
     for attempt in range(max_retries):
