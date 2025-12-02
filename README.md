@@ -157,7 +157,7 @@ OKX_PASSWORD=your_okx_password
 
 1. 安装依赖库：`pip install -r requirements.txt`（需自行创建requirements.txt）
 2. 配置`.env`文件，填入API密钥
-3. 运行程序：`python deepseek-OKX.py`
+3. 运行程序：`python ast.py`
 4. 程序将自动初始化并开始第一个交易周期
 5. 每15分钟自动执行一次交易分析和决策
 
