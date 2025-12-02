@@ -2,7 +2,7 @@ import os
 import time
 import schedule
 from openai import OpenAI
-import openai
+import openai  # 导入openai模块用于异常捕获
 import ccxt
 import pandas as pd
 import numpy as np
@@ -14,6 +14,8 @@ import logging
 from logging.handlers import RotatingFileHandler
 import traceback
 
+
+# ==================== 日志配置 ====================
 def setup_logger():
     """配置日志系统：同时输出到控制台和文件（按日期分割）"""
     log_dir = "trading_logs"
@@ -75,13 +77,16 @@ def setup_logger():
 
 logger = setup_logger()
 
+# ==================== 核心配置与初始化 ====================
 load_dotenv()
 
+# 初始化DeepSeek客户端
 deepseek_client = OpenAI(
     api_key=os.getenv('DEEPSEEK_API_KEY'),
     base_url="https://api.deepseek.com"
 )
 
+# 初始化OKX交易所
 exchange = ccxt.okx({
     'options': {
         'defaultType': 'swap',
@@ -91,6 +96,7 @@ exchange = ccxt.okx({
     'password': os.getenv('OKX_PASSWORD'),
 })
 
+# 交易参数配置
 TRADE_CONFIG = {
     'symbol': 'BTC/USDT:USDT',
     'amount': 0.008,
@@ -105,11 +111,13 @@ TRADE_CONFIG = {
     }
 }
 
+# 全局变量
 price_history = []
 signal_history = []
 position = None
 
 
+# ==================== 交易所相关函数 ====================
 def setup_exchange():
     """设置交易所参数"""
     try:
@@ -164,6 +172,7 @@ def get_current_position():
     return None
 
 
+# ==================== 技术指标相关函数 ====================
 def calculate_technical_indicators(df):
     """计算技术指标"""
     try:
@@ -305,7 +314,7 @@ def get_btc_ohlcv_enhanced():
         levels_analysis = get_support_resistance_levels(df)
 
         result = {
-            'price': float(current_data['close']), 
+            'price': float(current_data['close']),  # 确保为普通浮点数
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'high': float(current_data['high']),
             'low': float(current_data['low']),
@@ -340,6 +349,7 @@ def get_btc_ohlcv_enhanced():
     return None
 
 
+# ==================== 分析与信号生成 ====================
 def generate_technical_analysis_text(price_data):
     """生成技术分析文本"""
     try:
@@ -430,7 +440,7 @@ def create_fallback_signal(price_data):
 
 
 def analyze_with_deepseek(price_data):
-    """使用DeepSeek分析市场并生成交易信号（彻底修复无持仓格式化错误）"""
+    """使用DeepSeek分析市场并生成交易信号（彻底修复无持仓格式化错误 + 确保止损止盈非空）"""
     try:
         logger.info("开始使用DeepSeek进行市场分析...")
         technical_analysis = generate_technical_analysis_text(price_data)
@@ -496,13 +506,15 @@ def analyze_with_deepseek(price_data):
 
         【分析要求】
         基于以上分析，请给出明确的交易信号
+        特别注意：无论返回哪种信号（包括HOLD），必须返回有效的stop_loss和take_profit数值（保留2位小数），不能为null/None/空值
+        HOLD信号的止损止盈可设为当前价格的±2%（仅作参考，不实际执行）
 
         请用以下JSON格式回复：
         {{
             "signal": "BUY|SELL|HOLD",
             "reason": "简要分析理由(包含趋势判断和技术依据)",
-            "stop_loss": 具体价格,
-            "take_profit": 具体价格, 
+            "stop_loss": 具体价格（保留2位小数）,
+            "take_profit": 具体价格（保留2位小数）, 
             "confidence": "HIGH|MEDIUM|LOW"
         }}
         """
@@ -512,7 +524,7 @@ def analyze_with_deepseek(price_data):
             model="deepseek-chat",
             messages=[
                 {"role": "system",
-                 "content": f"您是一位专业的交易员，专注于{TRADE_CONFIG['timeframe']}周期趋势分析。请结合K线形态和技术指标做出判断，并严格遵循JSON格式要求。"},
+                 "content": f"您是一位专业的交易员，专注于{TRADE_CONFIG['timeframe']}周期趋势分析。请结合K线形态和技术指标做出判断，并严格遵循JSON格式要求：无论信号类型，stop_loss和take_profit必须是有效数字（保留2位小数），不能为null/None/空值。"},
                 {"role": "user", "content": prompt}
             ],
             stream=False,
@@ -542,6 +554,23 @@ def analyze_with_deepseek(price_data):
             logger.error(f"❌ DeepSeek返回的JSON缺少必需字段：{missing_fields}，触发备用信号")
             return create_fallback_signal(price_data)
 
+        # 关键修复1：确保stop_loss和take_profit是有效数字（处理None/字符串格式）
+        def safe_parse_price(price_val, default_price):
+            try:
+                return float(price_val) if price_val is not None else default_price
+            except (ValueError, TypeError):
+                return default_price
+
+        default_stop_loss = price_data['price'] * 0.98
+        default_take_profit = price_data['price'] * 1.02
+
+        signal_data['stop_loss'] = safe_parse_price(signal_data.get('stop_loss'), default_stop_loss)
+        signal_data['take_profit'] = safe_parse_price(signal_data.get('take_profit'), default_take_profit)
+
+        # 保留2位小数，避免精度问题
+        signal_data['stop_loss'] = round(signal_data['stop_loss'], 2)
+        signal_data['take_profit'] = round(signal_data['take_profit'], 2)
+
         signal_data['timestamp'] = price_data['timestamp']
         signal_history.append(signal_data)
         if len(signal_history) > 30:
@@ -569,8 +598,10 @@ def analyze_with_deepseek(price_data):
         logger.error(f"❌ DeepSeek分析失败：{str(e)}", exc_info=True)
     return create_fallback_signal(price_data)
 
+
+# ==================== 交易执行 ====================
 def execute_trade(signal_data, price_data):
-    """执行交易 - OKX版本（修复保证金判断逻辑）"""
+    """执行交易 - OKX版本（修复保证金判断逻辑 + 止损止盈空值处理）"""
     global position
 
     try:
@@ -601,8 +632,12 @@ def execute_trade(signal_data, price_data):
         logger.info(f"  - 信号类型：{signal_data['signal']}")
         logger.info(f"  - 信心程度：{signal_data['confidence']}")
         logger.info(f"  - 分析理由：{signal_data['reason']}")
-        logger.info(f"  - 止损价格：${signal_data['stop_loss']:,.2f}")
-        logger.info(f"  - 止盈价格：${signal_data['take_profit']:,.2f}")
+
+        # 关键修复2：日志输出前再次确认数值类型（避免None）
+        stop_loss = signal_data.get('stop_loss', 0.0)
+        take_profit = signal_data.get('take_profit', 0.0)
+        logger.info(f"  - 止损价格：${stop_loss:,.2f}" if stop_loss != 0.0 else "  - 止损价格：无（HOLD信号）")
+        logger.info(f"  - 止盈价格：${take_profit:,.2f}" if take_profit != 0.0 else "  - 止盈价格：无（HOLD信号）")
         logger.info(f"  - 当前持仓：{current_position if current_position else '无'}")
 
         if signal_data['confidence'] == 'LOW' and not TRADE_CONFIG['test_mode']:
@@ -613,6 +648,7 @@ def execute_trade(signal_data, price_data):
             logger.info("📌 测试模式 - 仅模拟交易，不实际下单")
             return
 
+        # ========== 修复核心：保证金判断逻辑 ==========
         balance = exchange.fetch_balance()
         usdt_balance = balance['USDT']['free']
         # 精准计算所需保证金（加5%缓冲，应对手续费/价格波动）
@@ -625,6 +661,7 @@ def execute_trade(signal_data, price_data):
             return
         else:
             logger.info(f"✅ 保证金充足：所需 {required_margin:.2f} USDT（含5%缓冲），可用 {usdt_balance:.2f} USDT")
+        # ==============================================
 
         if signal_data['signal'] == 'BUY':
             if current_position and current_position['side'] == 'short':
@@ -696,6 +733,7 @@ def execute_trade(signal_data, price_data):
         logger.error(f"❌ 订单执行失败：{str(e)}", exc_info=True)
 
 
+# ==================== 重试与主逻辑 ====================
 def analyze_with_deepseek_with_retry(price_data, max_retries=2):
     """带重试的DeepSeek分析"""
     for attempt in range(max_retries):
